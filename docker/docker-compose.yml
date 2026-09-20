@@ -1,0 +1,45 @@
+services:
+  db:
+    # pgvector image so the Enterprise AI modules work; plain postgres:17 is fine for Community.
+    image: pgvector/pgvector:pg17
+    container_name: odoo20-db
+    environment:
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: odoo
+      POSTGRES_DB: postgres
+    volumes:
+      - odoo-db:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  odoo:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        OE_VERSION: "20.0"
+        # Enterprise needs access to github.com/odoo/enterprise. See the README:
+        # without access the clone fails and only Community can be installed.
+        IS_ENTERPRISE: "False"
+        INSTALL_PAPER_MUNCHER: "False"
+    image: odoo-install-script:20.0
+    container_name: odoo20
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8069:8069"   # web
+      - "8072:8072"   # websocket / live chat
+    volumes:
+      - ./addons:/odoo/custom/addons      # drop your own modules here
+      - odoo-data:/var/lib/odoo           # filestore and sessions
+    restart: unless-stopped
+
+volumes:
+  odoo-db:
+  odoo-data:

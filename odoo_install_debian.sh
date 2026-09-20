@@ -41,6 +41,17 @@ HTTP_INTERFACE=""
 OE_VERSION="20.0"
 # Set this to True if you want to install the Odoo enterprise version!
 IS_ENTERPRISE="False"
+# Use an EXTERNAL PostgreSQL server instead of installing one locally. Set DB_HOST to a
+# hostname (for example "db" in Docker Compose) to skip the local PostgreSQL install and
+# point Odoo at that server. Leave it as "False" to install PostgreSQL on this machine
+# and connect over the local unix socket.
+DB_HOST="False"
+# Wait for the external server to answer before continuing. Set to "False" when the
+# script runs at image build time, where the database service is not reachable yet.
+DB_WAIT="True"
+DB_PORT="5432"
+DB_USER="odoo"
+DB_PASSWORD="odoo"
 # Install PostgreSQL from the official postgresql.org repository (PGDG) instead of the
 # distribution package. This gives you a recent PostgreSQL and the matching pgvector build.
 INSTALL_POSTGRESQL_PGDG="True"
@@ -173,7 +184,33 @@ check_python_version
 # Install PostgreSQL Server
 #--------------------------------------------------
 echo -e "\n---- Install PostgreSQL Server ----"
-if [ "$INSTALL_POSTGRESQL_PGDG" = "True" ]; then
+if [ "$DB_HOST" != "False" ]; then
+    echo -e "\n---- Using the external PostgreSQL server at ${DB_HOST}:${DB_PORT} ----"
+    sudo apt-get install -y postgresql-client
+    # Wait for the external server to accept connections before going further.
+    PG_WAIT=0
+    while [ "$DB_WAIT" = "True" ] && ! pg_isready -h "$DB_HOST" -p "$DB_PORT" >/dev/null 2>&1; do
+        PG_WAIT=$((PG_WAIT + 1))
+        if [ "$PG_WAIT" -gt 60 ]; then
+            echo "------------------------ERROR------------------------------"
+            echo "No PostgreSQL server answered at ${DB_HOST}:${DB_PORT} after 60 seconds."
+            echo "-----------------------------------------------------------"
+            exit 1
+        fi
+        sleep 1
+    done
+    if [ "$DB_WAIT" = "True" ]; then
+        PG_SERVER_MAJOR=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -tAc "SHOW server_version_num;" 2>/dev/null)
+    fi
+    PG_SERVER_MAJOR=$((${PG_SERVER_MAJOR:-160000} / 10000))
+    echo -e "\n---- PostgreSQL major version: ${PG_SERVER_MAJOR} ----"
+    if [ "$PG_SERVER_MAJOR" -lt "$MIN_PG_VERSION" ]; then
+        echo "------------------------ERROR------------------------------"
+        echo "Odoo ${OE_VERSION} requires PostgreSQL ${MIN_PG_VERSION} or above but ${DB_HOST} runs ${PG_SERVER_MAJOR}."
+        echo "-----------------------------------------------------------"
+        exit 1
+    fi
+elif [ "$INSTALL_POSTGRESQL_PGDG" = "True" ]; then
     if [ "$POSTGRESQL_VERSION" -lt "$MIN_PG_VERSION" ]; then
         echo "------------------------ERROR------------------------------"
         echo "Odoo ${OE_VERSION} requires PostgreSQL ${MIN_PG_VERSION} or above,"
@@ -192,6 +229,7 @@ else
     sudo apt-get install -y postgresql postgresql-client
 fi
 
+if [ "$DB_HOST" = "False" ]; then
 # Make sure PostgreSQL is up before we talk to it.
 sudo systemctl start postgresql >/dev/null 2>&1 \
   || sudo service postgresql start >/dev/null 2>&1 \
@@ -229,7 +267,8 @@ if [ "$IS_ENTERPRISE" = "True" ]; then
     echo -e "\n---- Installing pgvector for the Enterprise AI features ----"
     if sudo apt-get install -y "postgresql-${PG_SERVER_MAJOR}-pgvector"; then
         # The Odoo role is intentionally not a superuser, so it cannot run CREATE EXTENSION
-        # itself. Creating the extension in template1 makes every new database inherit it.
+        # itself. Create it in template1 and point Odoo at that template (db_template
+        # defaults to template0, which would NOT inherit the extension).
         sudo -u postgres psql -v ON_ERROR_STOP=1 -d template1 <<'SQL'
 CREATE EXTENSION IF NOT EXISTS vector;
 SQL
@@ -247,6 +286,7 @@ echo -e "\n---- Creating the ODOO PostgreSQL User  ----"
 # matches Odoo's deployment guidance. See:
 # https://www.odoo.com/documentation/20.0/administration/on_premise/deploy.html
 sudo su - postgres -c "createuser -d -R -S $OE_USER" 2> /dev/null || true
+fi
 
 #--------------------------------------------------
 # Create the Odoo system user
@@ -550,6 +590,18 @@ sudo su root -c "printf 'http_port = ${OE_PORT}\n' >> /etc/${OE_CONFIG}.conf"
 # 'longpolling_port' was removed in Odoo 20, the websocket worker uses 'gevent_port'.
 sudo su root -c "printf 'gevent_port = ${GEVENT_PORT}\n' >> /etc/${OE_CONFIG}.conf"
 sudo su root -c "printf 'logfile = /var/log/${OE_USER}/${OE_CONFIG}.log\n' >> /etc/${OE_CONFIG}.conf"
+if [ "$IS_ENTERPRISE" = "True" ]; then
+    # pgvector lives in template1; without this Odoo would build databases from
+    # template0 and the Enterprise AI modules would not find the vector extension.
+    sudo su root -c "printf 'db_template = template1\n' >> /etc/${OE_CONFIG}.conf"
+fi
+if [ "$DB_HOST" != "False" ]; then
+    # Odoo connects over TCP to the external server instead of the local unix socket.
+    sudo su root -c "printf 'db_host = ${DB_HOST}\n' >> /etc/${OE_CONFIG}.conf"
+    sudo su root -c "printf 'db_port = ${DB_PORT}\n' >> /etc/${OE_CONFIG}.conf"
+    sudo su root -c "printf 'db_user = ${DB_USER}\n' >> /etc/${OE_CONFIG}.conf"
+    sudo su root -c "printf 'db_password = ${DB_PASSWORD}\n' >> /etc/${OE_CONFIG}.conf"
+fi
 
 if [ $IS_ENTERPRISE = "True" ]; then
     # The enterprise addons have to come first so that they override the community ones.

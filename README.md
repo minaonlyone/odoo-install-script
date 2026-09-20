@@ -1,6 +1,19 @@
+<p align="center">
+  <img src="docs/banner.svg" alt="Odoo 20 Install Script — one command, Ubuntu, Debian or Docker" width="100%">
+</p>
+
+<p align="center">
+  <a href="#quick-start-docker"><img src="https://img.shields.io/badge/Docker-compose%20up-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker"></a>
+  <a href="#installation-bare-metal-or-vm"><img src="https://img.shields.io/badge/Ubuntu-24.04%2B-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 24.04+"></a>
+  <a href="#installation-bare-metal-or-vm"><img src="https://img.shields.io/badge/Debian-13%2B-A81D33?style=flat-square&logo=debian&logoColor=white" alt="Debian 13+"></a>
+  <img src="https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 17">
+  <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/license-MIT-black?style=flat-square" alt="MIT">
+</p>
+
 # Odoo 20 Install Script
 
-One-shot installer for **Odoo 20.0** on Ubuntu 24.04 LTS+ and Debian 13+, for x86, x86_64 and ARM.
+Install **Odoo 20.0** on a server or in Docker with one command, on x86, x86_64 or ARM.
 
 > **Ported from [Yenthe666/InstallScript](https://github.com/Yenthe666/InstallScript) 19.0.**
 > All credit for the original script goes to [Yenthe Van Ginneken](https://github.com/Yenthe666),
@@ -9,6 +22,116 @@ One-shot installer for **Odoo 20.0** on Ubuntu 24.04 LTS+ and Debian 13+, for x8
 > This repository is the Odoo 20.0 port of that work, kept MIT licensed.
 > The changes were also submitted upstream as
 > [Yenthe666/InstallScript#473](https://github.com/Yenthe666/InstallScript/pull/473).
+
+---
+
+## Quick start (Docker)
+
+The Docker image runs **the same `odoo_install.sh`** inside `ubuntu:24.04`, so a container
+and a server are built identically — no second code path to maintain.
+
+```bash
+git clone https://github.com/minaonlyone/odoo-install-script.git
+cd odoo-install-script/docker
+docker compose up -d
+```
+
+Open <http://localhost:8069> and create your first database. That is it.
+
+<p align="center">
+  <img src="docs/architecture.svg" alt="Docker Compose layout: an odoo container built by the install script talking to a pgvector PostgreSQL 17 container" width="100%">
+</p>
+
+### Everyday Docker commands
+
+```bash
+docker compose up -d                 # start
+docker compose logs -f odoo          # follow the Odoo log
+docker compose restart odoo          # restart after adding a module
+docker compose down                  # stop (keeps your data)
+docker compose down -v               # stop and DELETE the database volume
+docker compose build --no-cache odoo # rebuild the image from scratch
+```
+
+### Your own modules
+
+Drop them in `docker/addons/`, which is mounted at `/odoo/custom/addons`:
+
+```bash
+cp -r my_module docker/addons/
+docker compose restart odoo
+```
+
+Then in Odoo: **Apps ▸ Update Apps List**, search for your module and install it.
+
+> Odoo skips an addons directory that contains no module, so keep at least one module in
+> `docker/addons/` or the path drops off `addons_path` until you add one.
+
+### Build options
+
+Set these under `services.odoo.build.args` in `docker/docker-compose.yml`:
+
+| Build arg | Default | What it does |
+|---|---|---|
+| `OE_VERSION` | `20.0` | Odoo branch to clone |
+| `IS_ENTERPRISE` | `False` | Install Enterprise on top (see below) |
+| `INSTALL_WKHTMLTOPDF` | `True` | Patched-Qt wkhtmltopdf for PDF reports |
+| `INSTALL_PAPER_MUNCHER` | `False` | Odoo 20's new PDF engine (amd64 only) |
+
+### Enterprise in Docker
+
+Enterprise is **not** bundled and never will be. Cloning
+[odoo/enterprise](https://github.com/odoo/enterprise) requires your own access as an
+official Odoo partner. Without that access the clone fails and you can only run Community.
+
+To build with Enterprise, give the build your GitHub credentials, for example:
+
+```bash
+cd docker
+docker compose build \
+  --build-arg IS_ENTERPRISE=True \
+  --secret id=gh,env=GH_TOKEN odoo
+```
+
+and add a matching `RUN --mount=type=secret` git credential step to the `Dockerfile`, or
+simply bind-mount an `enterprise` checkout you already have and point `addons_path` at it.
+The script's behaviour is unchanged: no access, no Enterprise.
+
+The compose file already uses the `pgvector/pgvector:pg17` image and creates the `vector`
+extension in `template1`, which the Enterprise AI modules need.
+
+---
+
+## Installation (bare metal or VM)
+
+### 1. Download
+
+Ubuntu:
+```bash
+wget https://raw.githubusercontent.com/minaonlyone/odoo-install-script/main/odoo_install.sh
+```
+
+Debian:
+```bash
+wget https://raw.githubusercontent.com/minaonlyone/odoo-install-script/main/odoo_install_debian.sh
+```
+
+### 2. Make it executable and run it
+
+```bash
+chmod +x odoo_install.sh
+sudo ./odoo_install.sh
+```
+
+### 3. Manage the service
+
+```bash
+sudo systemctl status odoo-server     # is it running?
+sudo systemctl restart odoo-server    # restart
+sudo journalctl -u odoo-server -f     # follow the log
+sudo tail -f /var/log/odoo/odoo-server.log
+```
+
 
 ## Which script do I use?
 
@@ -45,21 +168,7 @@ warns about it in advance:
 These scripts write it explicitly: `0.0.0.0` on a plain install, `127.0.0.1` when Nginx is
 installed in front of Odoo. Override with `HTTP_INTERFACE`.
 
-## Installation
-
-### 1. Download the script
-
-Ubuntu:
-```bash
-wget https://raw.githubusercontent.com/minaonlyone/odoo-install-script/main/odoo_install.sh
-```
-
-Debian:
-```bash
-wget https://raw.githubusercontent.com/minaonlyone/odoo-install-script/main/odoo_install_debian.sh
-```
-
-### 2. Configure it
+## Configuration options
 
 Open the script and edit the variables at the top.
 
@@ -74,6 +183,8 @@ Open the script and edit the variables at the top.
 | `INSTALL_POSTGRESQL_PGDG` | Install PostgreSQL from postgresql.org instead of the distro. |
 | `POSTGRESQL_VERSION` | PostgreSQL major version. Default `17`. Odoo 20 needs 16+. |
 | `DEPENDENCIES_MODE` | `apt` (distribution packages, recommended) or `pip` (`requirements.txt`). |
+| `DB_HOST` | `False` installs PostgreSQL locally. Set a hostname to use an external server instead (this is what Docker uses). |
+| `DB_PORT` / `DB_USER` / `DB_PASSWORD` | Credentials for the external server. |
 | `INSTALL_WKHTMLTOPDF` | Install wkhtmltopdf. Default `True`. |
 | `INSTALL_PAPER_MUNCHER` | Install Paper Muncher, the new Odoo 20 PDF engine. amd64 only, opt-in. |
 | `USE_SYSTEMD` | `False` to keep the legacy `/etc/init.d` service. |
@@ -83,13 +194,6 @@ Open the script and edit the variables at the top.
 | `WEBSITE_NAME` | Domain for the Nginx config. |
 | `ENABLE_SSL` | Install certbot and enable HTTPS. Needs `INSTALL_NGINX` and a real `ADMIN_EMAIL`. |
 | `ADMIN_EMAIL` | Email for the Let's Encrypt registration. |
-
-### 3. Run it
-
-```bash
-chmod +x odoo_install.sh
-sudo ./odoo_install.sh
-```
 
 ## Dependency handling
 
