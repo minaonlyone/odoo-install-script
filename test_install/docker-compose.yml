@@ -1,0 +1,28 @@
+services:
+  odoo20-ubuntu:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu
+    container_name: odoo20-ubuntu
+    restart: unless-stopped
+    command: ["sleep", "infinity"]
+    tty: true
+    stdin_open: true
+    ports:
+      - "8069:8069"
+    volumes:
+      - ../odoo_install.sh:/opt/odoo-install/odoo_install.sh:ro
+
+  odoo20-debian:
+    build:
+      context: .
+      dockerfile: Dockerfile.debian
+    container_name: odoo20-debian
+    restart: unless-stopped
+    command: ["sleep", "infinity"]
+    tty: true
+    stdin_open: true
+    ports:
+      - "8169:8069"
+    volumes:
+      - ../odoo_install_debian.sh:/opt/odoo-install/odoo_install_debian.sh:ro
